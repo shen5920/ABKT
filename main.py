@@ -25,10 +25,12 @@ def parse_args():
 
     parser = argparse.ArgumentParser(description="ABKT")
 
-    parser.add_argument('--dataset', default='AICFE',
+    '''数据集修改'''
+    parser.add_argument('--dataset', default='ASSISTment2009',
                         help='Choose dataset. Default is "AICFE", choose from ["ASSISTment2009","AICFE"]. ')
 
-    parser.add_argument('--type', default='math',
+    '''修改——————————————————————————将默认值改为表示全部数据的标识——————————————————————————'''
+    parser.add_argument('--type', default='all_data',
                         help='The subset of the dataset.'
                              '["RandomIterateSection","RandomChildOrderSection"] for dataset ASSISTment2009'
                              '["math","phy"] for dataset AICFE')
@@ -44,7 +46,8 @@ def parse_args():
                         help='Weather use protrained knowledge module or not. Default is True.')
 
     # hyper-parameters in ability module
-    parser.add_argument('--AM_k', type=int, default=32,
+    '''数据集修改（default = 64）'''
+    parser.add_argument('--AM_k', type=int, default=64,
                         help='The dimensionality of ability model, namely k_A,. Default is 32.')
 
     parser.add_argument('--AM_lambda', type=float, default=0.1,
@@ -57,6 +60,8 @@ def parse_args():
     # hyper-parameters in boosting model
     parser.add_argument('--pretrain_clip', type=float, default=0.4,
                         help='The clip range, namly _mu. Default is 0.4. ')
+    
+    '''知识和能力的融合方式'''
     parser.add_argument('--joint_model', default="add",
                         help='The type of the joint model. Default is "add". Choose from ["add","mul"]. ')
 
