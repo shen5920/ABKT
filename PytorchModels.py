@@ -1,8 +1,8 @@
 import torch
 
-
+#将 CMF 输出的 “用户知识点状态” 转化为 “答题概率”，是知识模块的最终预测层
 def IRT_2(user_k,item_k,item_q,guess):
-    d = 1.702
+    d = 1.702#Rasch 模型的固定系数
     r = torch.sum((user_k - item_k)*item_q, 1)/torch.sum(item_q,1)
     p = guess + (1-guess)/(1+torch.exp(-d*r))
     return p
@@ -11,15 +11,31 @@ class K_CMF(torch.nn.Module):
     def __init__(self,k_hidden_size,skill_num,user_num,item_num,Q_matrix):
         super(K_CMF, self).__init__()
         print('*'*20,'Parameters:','*'*20)
+
         self.Q_matrix_m = Q_matrix.unsqueeze(2).repeat(1,1,k_hidden_size)
+        #将原来的Q矩阵【形状为（item_num, skill_num)】先增加一个维度 再复制k_hidden_size次
+        #    得到(item_num, skill_num, k_hidden_size) 它变成了一个三维的“掩码矩阵”，
+        #    其中如果原Q矩阵某个位置是0，那么这里 k_hidden_size 个通道全都是0；如果是1，则全都是1。
+        #    这个掩码将用来控制哪些参数可以被学习。
+
+        '''四个可学习的参数'''
+
         self.user_initial_k = torch.nn.Parameter(torch.zeros((user_num,skill_num))*0.01)
+        #学生初始知识状态，表示每个学生在每个技能上的掌握程度
         print('user_initial_k:',self.user_initial_k.shape)
+
         self.item_k = torch.nn.Parameter(torch.rand((item_num, skill_num)) * 0.01)
+        #题目难度，表示每道题目对各个技能的难度要求
         print('item_k:', self.item_k.shape)
+
         self.user_improving_k = torch.nn.Parameter(torch.ones((user_num,skill_num,k_hidden_size))*0.01)
+        #学生的动态知识提升参数，表示用户在某个技能上随着练习次数增加知识状态变化的k_hidden_size 种不同模式或趋势。
         print('user_improving_k:', self.user_improving_k.shape)
+
         self.item_improving_k = torch.nn.Parameter(torch.ones((item_num,skill_num,k_hidden_size))*0.01)
+        #题目的动态影响参数，它可能表示做某道题对用户某个技能的提升效果，同样有 k_hidden_size 种不同的模式。
         print('item_improving_k:', self.item_improving_k.shape)
+
         self.item_improving_k.data = self.item_improving_k*self.Q_matrix_m.cpu()
         print('*' * 20, 'Parameters:', '*' * 20)
 
