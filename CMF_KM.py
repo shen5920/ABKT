@@ -12,16 +12,19 @@ from PytorchModels import K_CMF,IRT_2
 class CMF:
     def __init__(self,
                  dataset='ASSISTment2009',
-                 type = 'RandomIterateSection',
+                 type='RandomIterateSection',
                  min_length=10,
                  early_stop=10,
                  epoch=100,
                  m_lr=0.0005,
-                 k_hidden_size = 5,
-                 device = 'cpu',
-                 guess = 0.25,
-                 ):
-
+                 k_hidden_size=5,
+                 device='cpu',
+                 guess=0.25,
+                 use_kfold=False,
+                 kfold_data=None,
+                 fold_idx=0):
+        
+        # 原有参数初始化
         self.dataset = dataset
         self.type = type
         self.k_hidden_size = k_hidden_size
@@ -30,39 +33,48 @@ class CMF:
         self.m_lr = m_lr
         self.device = device
         self.guess = guess
-
-        save_dataset_path = './ProcessedData/' + dataset + '-' + type + '-' + str(min_length) +'-squence'
-        if os.access(save_dataset_path, os.F_OK):
-            print("Processed data is existent...")
-            print('Loading...')
-            save_dataset_file = open(save_dataset_path, 'rb')
-            [self.user_num,self.item_num,self.skill_num,self.record_num,train_sequences,test_triplet,Q_matrix_s]\
-                = pickle.load(save_dataset_file)
-            save_dataset_file.close()
+        self.use_kfold = use_kfold
+        
+        if use_kfold and kfold_data is not None:
+            # 使用k折数据
+            train_sequences, test_triplet, Q_matrix_s = kfold_data
+            self.user_num = max(max(seq[0]) for seq in train_sequences.values()) + 1
+            self.item_num = max(max(seq[0]) for seq in train_sequences.values()) + 1
+            self.skill_num = max([max(i) for i in Q_matrix_s]) + 1
+            self.record_num = sum(len(seq[0]) for seq in train_sequences.values()) + len(test_triplet)
+            
+            print(f"Fold {fold_idx}: {self.user_num} students, {self.item_num} questions, "
+                  f"{self.skill_num} skills, {self.record_num} records")
         else:
-            print("Processed data is not existent...")
-            self.user_num,self.item_num,self.skill_num,self.record_num,train_sequences,test_triplet,Q_matrix_s = \
-                get_split_sequences(dataset, type, min_length)
+            # 原有数据加载逻辑
+            save_dataset_path = './ProcessedData/' + dataset + '-' + type + '-' + str(min_length) + '-squence'
+            if os.access(save_dataset_path, os.F_OK):
+                print("Processed data is existent...")
+                print('Loading...')
+                save_dataset_file = open(save_dataset_path, 'rb')
+                [self.user_num, self.item_num, self.skill_num, self.record_num, train_sequences, test_triplet, Q_matrix_s] = \
+                    pickle.load(save_dataset_file)
+                save_dataset_file.close()
+            else:
+                print("Processed data is not existent...")
+                self.user_num, self.item_num, self.skill_num, self.record_num, train_sequences, test_triplet, Q_matrix_s = \
+                    get_split_sequences(dataset, type, min_length)
 
-            train_test_sets = [self.user_num,self.item_num,self.skill_num,
-                               self.record_num,train_sequences,test_triplet,Q_matrix_s]
-            save_dataset_file = open(save_dataset_path, 'wb')
-            pickle.dump(train_test_sets, save_dataset_file)
-            save_dataset_file.close()
-            print('Training set and test set are saved in', save_dataset_path)
-        print("Data is processed which has:", self.user_num, 'students,',
+                train_test_sets = [self.user_num, self.item_num, self.skill_num,
+                                   self.record_num, train_sequences, test_triplet, Q_matrix_s]
+                save_dataset_file = open(save_dataset_path, 'wb')
+                pickle.dump(train_test_sets, save_dataset_file)
+                save_dataset_file.close()
+                print('Training set and test set are saved in', save_dataset_path)
+            print("Data is processed which has:", self.user_num, 'students,',
                   self.item_num, 'questions,',
                   self.skill_num, 'skills,', self.record_num, 'records')
 
-        print('*'*20,'hyperparameters','*'*20)
-        print('k_hidden_num:',self.k_hidden_size)
-        print('guess:',self.guess)
+        print('*'*20, 'hyperparameters', '*'*20)
+        print('k_hidden_num:', self.k_hidden_size)
+        print('guess:', self.guess)
 
-        # 将数据整理放入torch中
-        # 划分方法为每一个序列中随机分为Train和Test，其中序列的第一个不能是Test
-        # train_squences {userid:[[squence(itemid)],[squence(correct)]]}
-        # test_triplet [[userid,itemid,corect],...]
-
+        # 构建Q矩阵
         Q_matrix = torch.zeros((self.item_num, self.skill_num))
         index = 0
         for i in Q_matrix_s:
@@ -71,25 +83,35 @@ class CMF:
             index += 1
         self.Q_matrix = Q_matrix.to(self.device)
 
+        # 处理训练数据
         self.train_users = []
         self.train_itemsq = []
         self.train_correctsq = []
         self.train_itemsq_length = []
         for user in train_sequences:
-            self.train_users.append(user)
-            self.train_itemsq.append(torch.tensor(train_sequences[user][0]).squeeze(0))
-            self.train_correctsq.append(torch.tensor(train_sequences[user][1]).squeeze(0).long())
-            self.train_itemsq_length.append(train_sequences[user][0].__len__())
-        self.train_itemsq_length = torch.tensor(self.train_itemsq_length)
+            if len(train_sequences[user][0]) > 0:  # 确保训练序列不为空
+                self.train_users.append(user)
+                self.train_itemsq.append(torch.tensor(train_sequences[user][0]).squeeze(0))
+                self.train_correctsq.append(torch.tensor(train_sequences[user][1]).squeeze(0).long())
+                self.train_itemsq_length.append(len(train_sequences[user][0]))
+        
+        if len(self.train_itemsq_length) > 0:
+            self.train_itemsq_length = torch.tensor(self.train_itemsq_length)
+        else:
+            print("Warning: No training data available!")
+            return
 
         self.test_sets = torch.tensor(test_triplet).long().to(self.device)
-        self.test_users = list(set(self.test_sets[:,0].tolist()))
+        self.test_users = list(set(self.test_sets[:, 0].tolist()))
 
         # 训练的index
-        self.train_index = torch.arange(0, self.train_users.__len__(), 1)
-
+        self.train_index = torch.arange(0, len(self.train_users), 1)
 
     def train(self):
+        if len(self.train_users) == 0:
+            print("No training data available!")
+            return
+            
         print('*' * 20, 'start training', '*' * 20)
         train_data_loader = Data.DataLoader(
             dataset=self.train_index,
@@ -113,97 +135,105 @@ class CMF:
         stop = 0
 
         for epoch in range(self.epoch):
-
             self.K_CMF.train()
 
             bce_loss = 0
             train_pred_all = []
             train_pred01_all = []
             train_correct_all = []
-            # for ii,index in enumerate(train_data_loader):
-            # for index in tqdm(train_data_loader):
+            
             for index in train_data_loader:
                 user = self.train_users[index]
                 itemsq = self.train_itemsq[index].to(self.device)
                 correctsq = self.train_correctsq[index].to(self.device)
                 itemsq_length = self.train_itemsq_length[index]
-                itemsq.to(self.device)
-                user_k,_,_ = self.K_CMF.forward(user,itemsq)
+                
+                user_k, _, _ = self.K_CMF.forward(user, itemsq)
                 item_q = self.Q_matrix[itemsq, :]
-                item_k = self.K_CMF.item_k[itemsq,:]
+                item_k = self.K_CMF.item_k[itemsq, :]
 
-                pred = IRT_2(user_k[:-1, :],item_k,item_q,self.guess)
+                pred = IRT_2(user_k[:-1, :], item_k, item_q, self.guess)
 
                 train_pred_all.append(pred.detach().cpu().numpy())
                 train_pred01_all.append(pred.ge(0.5).float().detach().cpu().numpy())
                 train_correct_all.append(correctsq.cpu().numpy())
-                loss = BCEloss(pred.clamp(0,1), correctsq.float())
+                loss = BCEloss(pred.clamp(0, 1), correctsq.float())
                 bce_loss += loss
                 total_loss = loss
                 optimizer.zero_grad()
                 total_loss.backward(retain_graph=True)
                 optimizer.step()
 
-            train_y_all = np.hstack(train_correct_all)
-            train_pred_all = np.hstack(train_pred_all)
-            train_pred01_all = np.hstack(train_pred01_all)
+            if len(train_pred_all) > 0:
+                train_y_all = np.hstack(train_correct_all)
+                train_pred_all = np.hstack(train_pred_all)
+                train_pred01_all = np.hstack(train_pred01_all)
 
-            bce_loss /= self.train_index.shape[0]
-            train_ACC = accuracy_score(train_y_all, train_pred01_all)
-            train_AUC = roc_auc_score(train_y_all, train_pred_all)
+                bce_loss /= len(self.train_index)
+                train_ACC = accuracy_score(train_y_all, train_pred01_all)
+                train_AUC = roc_auc_score(train_y_all, train_pred_all)
 
-            print('Epoch:', epoch, '| BCEloss:', bce_loss.cpu().detach().numpy(), '| ACC:', train_ACC, '| AUC:',
-                  train_AUC)
+                print('Epoch:', epoch, '| BCEloss:', bce_loss.cpu().detach().numpy(), 
+                      '| ACC:', train_ACC, '| AUC:', train_AUC)
 
+            # 测试阶段
             self.K_CMF.eval()
-
             test_user_state_k = []
-            # get the state of each user
-            for test_index in range(self.test_users.__len__()):
-                test_user = self.test_users[test_index]
-                train_index = self.train_users.index(test_user)
-                train_index_itemsq = self.train_itemsq[train_index].to(self.device)
-                train_model_output_k,_,_ = self.K_CMF.forward(train_index,train_index_itemsq)
-                test_out_k = train_model_output_k[-1,:]
-                test_user_state_k.append(test_out_k.unsqueeze(0))
+            
+            for test_user in self.test_users:
+                if test_user in self.train_users:
+                    train_index = self.train_users.index(test_user)
+                    train_index_itemsq = self.train_itemsq[train_index].to(self.device)
+                    train_model_output_k, _, _ = self.K_CMF.forward(train_index, train_index_itemsq)
+                    test_out_k = train_model_output_k[-1, :]
+                    test_user_state_k.append(test_out_k.unsqueeze(0))
 
-            test_user_state_k = torch.cat(test_user_state_k,0)
+            if len(test_user_state_k) > 0:
+                test_user_state_k = torch.cat(test_user_state_k, 0)
+                
+                # 只对有训练数据的测试用户进行预测
+                test_indices = []
+                for i, user in enumerate(self.test_sets[:, 0]):
+                    if user in self.train_users:
+                        test_indices.append(i)
+                
+                if len(test_indices) > 0:
+                    user_states_k = test_user_state_k[[self.train_users.index(u) for u in self.test_sets[test_indices, 0]], :]
+                    item_states_q = self.Q_matrix[self.test_sets[test_indices, 1], :]
+                    item_state_k = self.K_CMF.item_k[self.test_sets[test_indices, 1], :]
+                    pred = IRT_2(user_states_k, item_state_k, item_states_q, self.guess)
 
-            user_states_k = test_user_state_k[self.test_sets[:,0],:]
-            item_states_q = self.Q_matrix[self.test_sets[:,1],:]
-            item_state_k = self.K_CMF.item_k[self.test_sets[:,1],:]
-            pred = IRT_2(user_states_k,item_state_k,item_states_q,self.guess)
-            # print(pred.detach().cpu().numpy())
+                    test_pred_collect = pred.detach().cpu().numpy()
+                    test_pred01_collect = pred.ge(0.5).float().detach().cpu().numpy()
+                    test_y_collect = self.test_sets[test_indices, 2].cpu().numpy()
 
-            test_pred_collect = pred.detach().cpu().numpy()
-            test_pred01_collect = pred.ge(0.5).float().detach().cpu().numpy()
-            test_y_collect = self.test_sets[:,2].cpu().numpy()
+                    ACC = accuracy_score(test_y_collect, test_pred01_collect)
+                    AUC = roc_auc_score(test_y_collect, test_pred_collect)
+                    self.ACC = ACC
+                    self.AUC = AUC
 
-            test_pred_all = test_pred_collect
-            test_pred01_all = test_pred01_collect
-            test_y_all = test_y_collect
-            ACC = accuracy_score(test_y_all, test_pred01_all)
-            AUC = roc_auc_score(test_y_all, test_pred_all)
-            self.ACC = ACC
-            self.AUC = AUC
+                    if AUC > self.bestAUC:
+                        self.bestAUC = AUC
+                        if not self.use_kfold:  # k折时不保存模型
+                            save_path_k = './Models/' + str(self.dataset) + '-' + str(self.type) + '/CMF-k-' + str(self.k_hidden_size) + '-' + str(self.guess) + '-earlystop'
+                            torch.save(self.K_CMF.state_dict(), save_path_k)
+                        stop = 0
+                    if ACC > self.bestACC:
+                        self.bestACC = ACC
+                        stop = 0
+                    else:
+                        stop = stop + 1
+                    
+                    print('Test ACC:', ACC, '| Test AUC:', AUC)
+                    print('Best ACC:', self.bestACC, '| Best AUC:', self.bestAUC)
+                    
+                    if stop >= self.early_stop or epoch == self.epoch - 1:
+                        print('*' * 20, 'stop training', '*' * 20)
+                        if not self.use_kfold:
+                            save_path_k = './Models/' + str(self.dataset) + '-' + str(self.type) + '/CMF-k-' + str(self.k_hidden_size) + '-' + str(self.guess) + '-epoch' + str(epoch)
+                            torch.save(self.K_CMF.state_dict(), save_path_k)
+                        break
 
-            if AUC > self.bestAUC:
-                self.bestAUC = AUC
-                save_path_k = './Models/'+str(self.dataset)+'-'+str(self.type)+'/CMF-k-' + str(self.k_hidden_size)+ '-' + str(self.guess) + '-earlystop'
-                torch.save(self.K_CMF.state_dict(), save_path_k)
-                stop = 0
-            if ACC > self.bestACC:
-                self.bestACC = ACC
-                stop = 0
-            else:
-                stop = stop + 1
-            print('Test ACC:',ACC,'| Test AUC:',AUC)
-            print('Best ACC:', self.bestACC, '| Best AUC:', self.bestAUC)
-            if stop >= self.early_stop or epoch == self.epoch-1:
-                print('*' * 20, 'stop training', '*' * 20)
-                save_path_k = './Models/'+str(self.dataset)+'-'+str(self.type)+'/CMF-k-' + str(self.k_hidden_size) + '-' + str(self.guess) + '-epoch' + str(epoch)
-                torch.save(self.K_CMF.state_dict(), save_path_k)
-                break
 
 
     def log_result(self):
