@@ -31,7 +31,7 @@ class GMF_BOOSTING:
                  type='RandomIterateSection',
                  min_length=10,
                  early_stop=50,
-                 batch_size=128,
+                 batch_size=512,
                  epoch=50000,
                  CMF_k=5,
                  CMF_guess=0.25,
@@ -69,6 +69,9 @@ class GMF_BOOSTING:
         # 在初始化中保存fold_idx
         self.fold_idx = fold_idx
         
+        self.train_history = []  # 记录每轮训练结果
+        self.test_history = []   # 记录每轮测试结果
+
         if use_kfold and kfold_data is not None:
             # 使用k折数据
             train_sequences, test_triplet, Q_matrix_s = kfold_data
@@ -281,6 +284,13 @@ class GMF_BOOSTING:
             l2_loss /= self.train_sets.shape[0]
             print('Epoch:', e, '| Loss:', loss.cpu().detach().numpy(), '| l2loss:', l2_loss.cpu().detach().numpy())
 
+            # 记录训练结果
+            self.train_history.append({
+                'epoch': e,
+                'train_loss': loss.cpu().detach().numpy(),
+                'train_l2loss': l2_loss.cpu().detach().numpy()
+            })
+
             # 测试阶段
             self.model.eval()
             test_pred, _, _ = self.model.forward(self.test_sets[:, 0].long(), self.test_sets[:, 1].long())
@@ -300,6 +310,13 @@ class GMF_BOOSTING:
             ACC = accuracy_score(test_correct, test_pred_01)
             AUC = roc_auc_score(test_correct, test_pred)
             
+            # 记录测试结果
+            self.test_history.append({
+                'epoch': e,
+                'test_ACC': ACC,
+                'test_AUC': AUC
+            })
+
             if AUC > self.bestAUC:
                 self.bestAUC = AUC
                 # 创建保存目录（如果不存在）
@@ -330,16 +347,40 @@ class GMF_BOOSTING:
     def log_result(self):
         filename = os.path.split(__file__)[-1].split(".")[0]
         f = open("./Results/" + filename + "-" + self.dataset +'-' + self.type + ".txt", "a+")
+        
+        # 写入基本信息
         f.write("datasets = " + self.dataset+ "\n")
         f.write("embedding_k = " + str(self.embedding_k) + "\n")
         f.write("CMF_k = " + str(self.CMF_k) + " CMF_guess = " + str(self.CMF_guess) + "\n")
         f.write("pretrain_clip = " + str(self.pretrain_clip) + " combine method = " + str(self.combine) + "\n")
         f.write("adjustment matrix = " + str(self.adj) + " GMF layers = " + str(self.GMF_layer) + "\n")
         f.write("m_lambda = " + str(self.m_lambda) + "\n")
+        
+        # 写入每轮训练结果
+        f.write("\n" + "="*50 + "\n")
+        f.write("TRAINING HISTORY\n")
+        f.write("="*50 + "\n")
+        f.write("Epoch\tTrain_Loss\tTrain_L2Loss\n")
+        for record in self.train_history:
+            f.write(f"{record['epoch']}\t{record['train_loss']:.6f}\t{record['train_l2loss']:.6f}\n")
+        
+        # 写入每轮测试结果
+        f.write("\n" + "="*50 + "\n")
+        f.write("TESTING HISTORY\n")
+        f.write("="*50 + "\n")
+        f.write("Epoch\tTest_ACC\tTest_AUC\n")
+        for record in self.test_history:
+            f.write(f"{record['epoch']}\t{record['test_ACC']:.6f}\t{record['test_AUC']:.6f}\n")
+        
+        # 写入最佳结果
+        f.write("\n" + "="*50 + "\n")
+        f.write("BEST RESULTS\n")
+        f.write("="*50 + "\n")
         f.write("Best ACC = " + str(self.bestACC) + "\n")
         f.write("Best AUC = " + str(self.bestAUC) + "\n")
         f.write("\n")
         f.write("\n")
+        f.close()
         print("The results are logged!!!")
 
 
