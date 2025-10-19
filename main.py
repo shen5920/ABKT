@@ -92,8 +92,22 @@ def log_results(results, args, model_paths=None):
                 f.write(f"  CMF: {paths['CMF']}\n")
                 f.write(f"  GMF: {paths['GMF']}\n")
     
+    # 保存每轮详细历史到CSV文件
+    with open(f"{result_dir}/detailed_history.csv", "w") as f:
+        f.write("Fold,Model,Epoch,Type,ACC,AUC,Loss,L2Loss\n")
+        for i, result in enumerate(results):
+            if 'CMF_history' in result:
+                for record in result['CMF_history']:
+                    f.write(f"{i+1},CMF,{record['epoch']},{record.get('type','train')},")
+                    f.write(f"{record.get('ACC','')},{record.get('AUC','')},{record.get('loss','')},{record.get('l2loss','')}\n")
+            if 'GMF_history' in result:
+                for record in result['GMF_history']:
+                    f.write(f"{i+1},GMF,{record['epoch']},{record.get('type','train')},")
+                    f.write(f"{record.get('ACC','')},{record.get('AUC','')},{record.get('loss','')},{record.get('l2loss','')}\n")
+    
     print(f"Results saved to {result_dir}")
     return result_dir
+
 
 def main():
     args = parse_args()
@@ -158,13 +172,21 @@ def main():
             }
             all_model_paths.append(fold_model_paths)
             
-            # 记录结果
+            # 记录结果时包含历史记录
             fold_result = {
                 'fold': fold_idx + 1,
                 'CMF_ACC': cmf.bestACC,
                 'CMF_AUC': cmf.bestAUC,
                 'GMF_ACC': gmf.bestACC,
-                'GMF_AUC': gmf.bestAUC
+                'GMF_AUC': gmf.bestAUC,
+                'CMF_history': {
+                    'train': cmf.train_history,
+                    'test': cmf.test_history
+                },
+                'GMF_history': {
+                    'train': gmf.train_history,
+                    'test': gmf.test_history
+                }
             }
             all_results.append(fold_result)
             
