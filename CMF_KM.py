@@ -23,7 +23,7 @@ class CMF:
                  use_kfold=False,
                  kfold_data=None,
                  fold_idx=0,
-                 batch_size=128):
+                 batch_size=512):
         
         # 原有参数初始化
         self.dataset = dataset
@@ -38,6 +38,9 @@ class CMF:
         self.batch_size = batch_size  # 保存batch_size
         # 在初始化中保存fold_idx
         self.fold_idx = fold_idx
+
+        self.train_history = []  # 记录每轮训练结果
+        self.test_history = []   # 记录每轮测试结果
         
         if use_kfold and kfold_data is not None:
             # 使用k折数据
@@ -189,6 +192,14 @@ class CMF:
 
                 print('Epoch:', epoch, '| BCEloss:', bce_loss, 
                     '| ACC:', train_ACC, '| AUC:', train_AUC)
+                
+                # 记录训练结果
+                self.train_history.append({
+                    'epoch': epoch,
+                    'train_loss': bce_loss,
+                    'train_ACC': train_ACC,
+                    'train_AUC': train_AUC
+                })                
 
             # 测试阶段（保持不变）
             self.K_CMF.eval()
@@ -226,6 +237,13 @@ class CMF:
                     self.ACC = ACC
                     self.AUC = AUC
 
+                    # 记录测试结果
+                    self.test_history.append({
+                        'epoch': epoch,
+                        'test_ACC': ACC,
+                        'test_AUC': AUC
+                    })                    
+
                     if AUC > self.bestAUC:
                         self.bestAUC = AUC
                         # 创建保存目录（如果不存在）
@@ -261,15 +279,39 @@ class CMF:
     def log_result(self):
         filename = os.path.split(__file__)[-1].split(".")[0]
         f = open("./Results/" + filename + "-" + self.dataset + ".txt", "a+")
+        
+        # 写入基本信息
         f.write("datasets = " + self.dataset+ "\n")
         f.write("type = " + self.type+ "\n")
         f.write("k_hidden_num = " + str(self.k_hidden_size)+ " guess = " + str(self.guess)+ "\n")
+        
+        # 写入每轮训练结果
+        f.write("\n" + "="*50 + "\n")
+        f.write("TRAINING HISTORY\n")
+        f.write("="*50 + "\n")
+        f.write("Epoch\tTrain_Loss\tTrain_ACC\tTrain_AUC\n")
+        for record in self.train_history:
+            f.write(f"{record['epoch']}\t{record['train_loss']:.6f}\t{record['train_ACC']:.6f}\t{record['train_AUC']:.6f}\n")
+        
+        # 写入每轮测试结果
+        f.write("\n" + "="*50 + "\n")
+        f.write("TESTING HISTORY\n")
+        f.write("="*50 + "\n")
+        f.write("Epoch\tTest_ACC\tTest_AUC\n")
+        for record in self.test_history:
+            f.write(f"{record['epoch']}\t{record['test_ACC']:.6f}\t{record['test_AUC']:.6f}\n")
+        
+        # 写入最佳结果
+        f.write("\n" + "="*50 + "\n")
+        f.write("BEST RESULTS\n")
+        f.write("="*50 + "\n")
         f.write("Best ACC = " + str(self.bestACC) + "\n")
         f.write("Best AUC = " + str(self.bestAUC) + "\n")
         f.write("Final ACC = " + str(self.ACC) + "\n")
         f.write("Final AUC = " + str(self.AUC) + "\n")
         f.write("\n")
         f.write("\n")
+        f.close()
         print("The results are logged!!!")
 
 
